@@ -180,6 +180,34 @@ def calculate_time_offset(times_A, quaternions_A, times_B, quaternions_B, filter
   return time_offset
 
 
+def interpolate_position_from_samples(time_stamped_poses, samples):
+  """
+  Interpolate time stamped position at the time stamps provided in samples.
+  The poses are expected in the following format:
+    [timestamp [s], x [m], y [m], z [m], qx, qy, qz, qw]
+
+  We apply linear interpolation to the position.
+  """
+
+  # Extract the quaternions from the poses.
+  quaternions = []
+  for pose in time_stamped_poses[:, 1:]:
+    quaternions.append(Quaternion(q=pose[3:]))
+
+  # Interpolate the position and assemble the full aligned pose vector.
+  num_poses = samples.shape[0]
+  aligned_poses = np.zeros((num_poses, time_stamped_poses.shape[1]))
+  aligned_poses[:, 0] = samples[:]
+
+  for i in [1, 2, 3]:
+    aligned_poses[:, i] = np.interp(
+        samples,
+        np.asarray(time_stamped_poses[:, 0]).ravel(),
+        np.asarray(time_stamped_poses[:, i]).ravel())
+
+  return aligned_poses.copy()
+
+
 def interpolate_poses_from_samples(time_stamped_poses, samples):
   """
   Interpolate time stamped poses at the time stamps provided in samples.
@@ -219,6 +247,7 @@ def interpolate_poses_from_samples(time_stamped_poses, samples):
 def compute_aligned_poses(time_stamped_poses_A,
                           time_stamped_poses_B,
                           time_offset,
+                          poses_B_H_only_position,
                           plot=False):
   """
   time_stamped_poses should have the following format:
@@ -284,10 +313,21 @@ def compute_aligned_poses(time_stamped_poses_A,
   # Uncomment if you want to have equally spaced samples in time.
   # samples = np.linspace(start_time, end_time, interval / dt + 1)
 
-  aligned_poses_A = interpolate_poses_from_samples(time_stamped_poses_A_shifted,
-                                                   samples)
+  if poses_B_H_only_position:
+      aligned_poses_A = interpolate_position_from_samples(time_stamped_poses_A_shifted,
+                                                          samples)
+  else:
+      aligned_poses_A = interpolate_poses_from_samples(time_stamped_poses_A_shifted,
+                                                       samples)
   aligned_poses_B = interpolate_poses_from_samples(time_stamped_poses_B,
                                                    samples)
+
+  # Copy the quaternions from the poses_W_E to the poses_B_H as the Leica total
+  # station only provids the position
+  if poses_B_H_only_position:
+      for pose_index, pose in enumerate(aligned_poses_B[:, 1:]):
+          aligned_poses_A[pose_index, 4:] = pose[3:]
+
   assert aligned_poses_A.shape == aligned_poses_B.shape
   assert np.allclose(aligned_poses_A[:, 0], aligned_poses_B[:, 0], atol=1e-8)
   print("Found {} matching poses.".format(aligned_poses_A.shape[0]))

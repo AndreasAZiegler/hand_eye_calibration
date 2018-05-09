@@ -35,6 +35,12 @@ if __name__ == '__main__':
       required=True,
       help='Path to the CSV file where the aligned poses will be stored. (e.g. Hand poses in Body frame)')
   parser.add_argument(
+      '--aligned_poses_B_H_only_position',
+      type=bool,
+      required=False,
+      default=False,
+      help='For systems e.g. a Leica total station which only provides the position.')
+  parser.add_argument(
       '--aligned_poses_W_E_csv_file',
       required=True,
       help='Path to the CSV file where the aligned poses will be stored. (e.g. Eye poses in World frame)')
@@ -91,7 +97,7 @@ if __name__ == '__main__':
   print("Computing aligned poses...")
   (aligned_poses_B_H, aligned_poses_W_E) = compute_aligned_poses(
       time_stamped_poses_B_H, time_stamped_poses_W_E, time_offset,
-      filtering_config.visualize)
+      args.aligned_poses_B_H_only_position, filtering_config.visualize)
 
   print("Writing aligned poses to CSV files...")
   write_time_stamped_poses_to_csv_file(aligned_poses_B_H,
