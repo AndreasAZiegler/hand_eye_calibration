@@ -124,6 +124,10 @@ A typical use case consists of the following steps (here using ROS):
     --aligned_poses_W_E_csv_file camera_aligned.csv \
     --time_offset_output_csv_file time_offset.csv
   ```
+  Use the following option if you the end effector only provides the position e.g. a Leica total station
+  ```
+    --aligned_poses_B_H_only_position TRUE
+  ```
 - Perform the dual-quaternion-based hand-eye calibration:
   ```bash
   rosrun hand_eye_calibration compute_hand_eye_calibration.py \
