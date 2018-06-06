@@ -297,7 +297,6 @@ def quaternion_nlerp(q_1, q_2, fraction):
   q.normalize()
   return q
 
-
 def quaternions_interpolate(q_left, t_left, q_right, t_right, times):
   """ Returns an array of the interpolated quaternions between q_left/t_left and
   q_right/t_right at times.

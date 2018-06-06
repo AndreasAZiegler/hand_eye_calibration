@@ -3,6 +3,7 @@
 
 from quaternion import (angular_velocity_between_quaternions,
                         quaternions_interpolate, Quaternion)
+from position import positions_interpolate
 from time_alignment_plotting_tools import (plot_results, plot_input_data,
                                            plot_time_stamped_poses,
                                            plot_angular_velocities)
@@ -59,6 +60,28 @@ def calculate_time_offset_from_signals(times_A, signal_A,
                  time_offset, block=block)
   return time_offset
 
+def resample_positions_from_samples(times, positions, samples):
+  interp_positions = []
+  for sample in samples:
+    assert sample <= times[-1], (sample, times)
+    assert sample >= times[0], (sample, times[0])
+
+    right_idx = bisect.bisect_left(times, sample)
+    if (np.isclose(sample, times[right_idx], atol=1e-16)):
+      interp_positions.append(positions[right_idx])
+    else:
+      left_idx = right_idx - 1
+      assert right_idx < times.shape[0], end_idx
+      assert left_idx >= 0, left_idx
+      sample_times = []
+      sample_times.append(sample)
+      position_interp = positions_interpolate(
+          positions[left_idx], times[left_idx], positions[right_idx],
+          times[right_idx], sample_times)
+      interp_positions += position_interp
+  assert len(interp_positions) == samples.shape[0], str(
+      len(interp_positions)) + " vs " + str(samples.shape[0])
+  return interp_positions
 
 def resample_quaternions_from_samples(times, quaternions, samples):
   """
@@ -87,6 +110,11 @@ def resample_quaternions_from_samples(times, quaternions, samples):
       len(interp_quaternions)) + " vs " + str(samples.shape[0])
   return interp_quaternions
 
+def resample_positions(times, positions, dt):
+  interval = times[-1] - times[0]
+  samples = np.linspace(times[0], times[-1], interval / dt + 1)
+  return (resample_positions_from_samples(times, positions, samples),
+          samples)
 
 def resample_quaternions(times, quaternions, dt):
   """
@@ -99,6 +127,24 @@ def resample_quaternions(times, quaternions, dt):
   return (resample_quaternions_from_samples(times, quaternions, samples),
           samples)
 
+def compute_velocity_norms(positions, samples, smoothing_kernel_size, clipping_percentile, plot=False):
+  velocity_norms = []
+  velocity_size = (len(positions) - 1)
+  velocity = np.zeros((velocity_size, 3))
+  for i in range(0, velocity_size):
+    dt = samples[i + 1] - samples[i]
+    assert dt > 0.
+    velocity[i, :] = np.linalg.norm(positions[i + 1] - positions[i]) / dt
+
+  velocity_filtered = filter_and_smooth_angular_velocity(
+      velocity, smoothing_kernel_size, clipping_percentile, plot)
+
+  for i in range(0, velocity_size):
+    velocity_norms.append(
+        np.linalg.norm(velocity_filtered[i, :]))
+
+  assert len(velocity_norms) == (len(positions) - 1)
+  return velocity_norms
 
 def compute_angular_velocity_norms(quaternions, samples, smoothing_kernel_size, clipping_percentile, plot=False):
   angular_velocity_norms = []
@@ -121,7 +167,9 @@ def compute_angular_velocity_norms(quaternions, samples, smoothing_kernel_size, 
   return angular_velocity_norms
 
 
-def calculate_time_offset(times_A, quaternions_A, times_B, quaternions_B, filtering_config, plot=False):
+def calculate_time_offset(times_A, time_stamped_poses_B_H, quaternions_A,
+                          times_B, time_stamped_poses_W_E, quaternions_B,
+                          filtering_config, poses_B_H_only_position, plot=False):
   """
   Calculate the time offset between the stamped quaternions_A and quaternions_B.
 
@@ -143,39 +191,73 @@ def calculate_time_offset(times_A, quaternions_A, times_B, quaternions_B, filter
 
   # Using the smaller mean time step resample the poses inbetween
   # measurements.
-  (quaternions_A_interp, samples_A) = resample_quaternions(times_A,
-                                                           quaternions_A, dt)
-  (quaternions_B_interp, samples_B) = resample_quaternions(times_B,
-                                                           quaternions_B, dt)
+  if poses_B_H_only_position:
+      (time_stamped_poses_B_H_interp, samples_A) = resample_positions(times_A,
+                                                               time_stamped_poses_B_H, dt)
+      (time_stamped_poses_W_E_interp, samples_B) = resample_positions(times_B,
+                                                               time_stamped_poses_W_E, dt)
+      # Compute velocity norms for the resampled orientations.
+      velocity_norms_A = compute_velocity_norms(
+          time_stamped_poses_B_H_interp, samples_A,
+          filtering_config.smoothing_kernel_size_A,
+          filtering_config.clipping_percentile_A, plot)
+      velocity_norms_B = compute_velocity_norms(
+          time_stamped_poses_W_E_interp, samples_B,
+          filtering_config.smoothing_kernel_size_B,
+          filtering_config.clipping_percentile_B, plot)
 
-  # Compute angular velocity norms for the resampled orientations.
-  angular_velocity_norms_A = compute_angular_velocity_norms(
-      quaternions_A_interp, samples_A,
-      filtering_config.smoothing_kernel_size_A,
-      filtering_config.clipping_percentile_A, plot)
-  angular_velocity_norms_B = compute_angular_velocity_norms(
-      quaternions_B_interp, samples_B,
-      filtering_config.smoothing_kernel_size_B,
-      filtering_config.clipping_percentile_B, plot)
+      # Adapt samples to filtered data.
+      length_before = len(samples_A)
+      samples_A = samples_A[:len(velocity_norms_A)]
+      samples_B = samples_B[:len(velocity_norms_B)]
+      assert len(samples_A) == length_before - 1
 
-  # Adapt samples to filtered data.
-  length_before = len(samples_A)
-  samples_A = samples_A[:len(angular_velocity_norms_A)]
-  samples_B = samples_B[:len(angular_velocity_norms_B)]
-  assert len(samples_A) == length_before - 1
+      # Plot the intput as it goes through the interpolation and filtering.
+      if plot:
+        plot_input_data(quaternions_A, quaternions_B, quaternions_A_interp,
+                        quaternions_B_interp, angular_velocity_norms_A,
+                        angular_velocity_norms_B,
+                        angular_velocity_norms_A,
+                        angular_velocity_norms_B, False)
 
-  # Plot the intput as it goes through the interpolation and filtering.
-  if plot:
-    plot_input_data(quaternions_A, quaternions_B, quaternions_A_interp,
-                    quaternions_B_interp, angular_velocity_norms_A,
-                    angular_velocity_norms_B,
-                    angular_velocity_norms_A,
-                    angular_velocity_norms_B, False)
+      # Comput time offset.
+      time_offset = calculate_time_offset_from_signals(
+          samples_A, velocity_norms_A, samples_B,
+          velocity_norms_B, plot, True)
+  else:
+      (quaternions_A_interp, samples_A) = resample_quaternions(times_A,
+                                                               quaternions_A, dt)
+      (quaternions_B_interp, samples_B) = resample_quaternions(times_B,
+                                                               quaternions_B, dt)
 
-  # Comput time offset.
-  time_offset = calculate_time_offset_from_signals(
-      samples_A, angular_velocity_norms_A, samples_B,
-      angular_velocity_norms_B, plot, True)
+      # Compute angular velocity norms for the resampled orientations.
+      angular_velocity_norms_A = compute_angular_velocity_norms(
+          quaternions_A_interp, samples_A,
+          filtering_config.smoothing_kernel_size_A,
+          filtering_config.clipping_percentile_A, plot)
+      angular_velocity_norms_B = compute_angular_velocity_norms(
+          quaternions_B_interp, samples_B,
+          filtering_config.smoothing_kernel_size_B,
+          filtering_config.clipping_percentile_B, plot)
+
+      # Adapt samples to filtered data.
+      length_before = len(samples_A)
+      samples_A = samples_A[:len(angular_velocity_norms_A)]
+      samples_B = samples_B[:len(angular_velocity_norms_B)]
+      assert len(samples_A) == length_before - 1
+
+      # Plot the intput as it goes through the interpolation and filtering.
+      if plot:
+        plot_input_data(quaternions_A, quaternions_B, quaternions_A_interp,
+                        quaternions_B_interp, angular_velocity_norms_A,
+                        angular_velocity_norms_B,
+                        angular_velocity_norms_A,
+                        angular_velocity_norms_B, False)
+
+      # Comput time offset.
+      time_offset = calculate_time_offset_from_signals(
+          samples_A, angular_velocity_norms_A, samples_B,
+          angular_velocity_norms_B, plot, True)
 
   return time_offset
 

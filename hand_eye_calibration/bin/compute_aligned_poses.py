@@ -88,8 +88,9 @@ if __name__ == '__main__':
   filtering_config = FilteringConfig()
   filtering_config.visualize = args.visualize
   # TODO(mfehr): get filtering config from args!
-  time_offset = calculate_time_offset(times_B_H, quaternions_B_H, times_W_E,
-                                      quaternions_W_E, filtering_config,
+  time_offset = calculate_time_offset(times_B_H, time_stamped_poses_B_H, quaternions_B_H,
+                                      times_W_E, time_stamped_poses_W_E, quaternions_W_E,
+                                      filtering_config, args.aligned_poses_B_H_only_position,
                                       filtering_config.visualize)
 
   print("Final time offset: ", time_offset, "s")
