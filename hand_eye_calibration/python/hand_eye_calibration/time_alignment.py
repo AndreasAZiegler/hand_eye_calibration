@@ -224,6 +224,7 @@ def calculate_time_offset(times_A, time_stamped_poses_B_H, quaternions_A,
       time_offset = calculate_time_offset_from_signals(
           samples_A, velocity_norms_A, samples_B,
           velocity_norms_B, plot, True)
+      time_offset = 0
   else:
       (quaternions_A_interp, samples_A) = resample_quaternions(times_A,
                                                                quaternions_A, dt)
